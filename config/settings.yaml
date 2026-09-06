@@ -1,0 +1,25 @@
+timezone: Asia/Kolkata
+collection:
+  interval_minutes: 60
+  lookback_hours: 3
+  save_raw: true
+
+aqi_in:
+  station_name: Prana_dixon
+  base_url: https://dash.aqi.in/
+
+aurassure:
+  asset_name: Plaksha University_0223CVY3
+  base_url: https://app.aurassure.com/
+
+parameters:
+  - aqi
+  - pm2_5
+  - pm10
+  - no2
+  - so2
+  - o3
+  - co
+  - co2
+  - temperature
+  - humidity

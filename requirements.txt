@@ -1,0 +1,6 @@
+playwright>=1.55
+python-dotenv>=1.1
+pandas>=2.2
+pyyaml>=6.0
+requests>=2.32
+matplotlib>=3.9
