@@ -49,6 +49,9 @@ data/processed/combined/comparison.csv
 reporting/summary.py     stats CSV + matplotlib charts → data/reports/
 ```
 
+Ranges:
+`config/settings.yaml` → `main.py` → collector `init_kwargs`/`collect_kwargs`.
+
 ## Canonical units
 
 All pollutants are normalized to a single unit system before AQI math:
@@ -112,6 +115,21 @@ AURASSURE_EMAIL=...
 AURASSURE_PASSWORD=...
 DATA_DIR=./data
 ```
+
+## Configuration (`config/settings.yaml`)
+
+The collectors read their export range from `config/settings.yaml` (nothing is
+hard-coded in `main.py`):
+
+- **AQI.in** — `aqi_in.timeline` (default `7 days`) and `aqi_in.slot`
+  (default `15 min`) are passed to the dashboard export wizard.
+- **Aurassure** — `aurassure.date_range` selects a Custom Reports preset:
+  `Last 7 days` (default), `This Week`, `Last week`, `Last 30 days`,
+  `Last Month`, `This month`, `This Quarter (Jul - Sep)`,
+  `Last Quarter (Apr - Jun)`, `this_year`, or `Custom`.
+- When `date_range: Custom`, you must also set `start_date`/`end_date` in the
+  format the dashboard picker expects: `DD Mon YYYY, HH:mm`
+  (e.g. `01 Jun 2026, 00:00`).
 
 ## Run
 

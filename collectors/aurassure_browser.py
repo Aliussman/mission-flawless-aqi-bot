@@ -5,10 +5,14 @@ from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 class AurassureBrowserCollector:
-    def __init__(self, store, base_url=None, asset_name=None):
+    def __init__(self, store, base_url=None, asset_name=None, date_range=None,
+                 start_date=None, end_date=None):
         self.store = store
         self.base_url = base_url or os.getenv("AURASSURE_BASE_URL", "https://app.aurassure.com/")
         self.asset_name = asset_name or os.getenv("AURASSURE_ASSET_NAME", "Plaksha University_0223CVY3")
+        self.date_range = date_range or os.getenv("AURASSURE_DATE_RANGE", "Last 7 days")
+        self.start_date = start_date
+        self.end_date = end_date
 
     async def collect(self):
         email = os.getenv("AURASSURE_EMAIL")
@@ -71,7 +75,12 @@ class AurassureBrowserCollector:
                 await page.click("text=Custom Reports")
                 await page.wait_for_timeout(2000)
 
-                # 5. Generate the report (Average format is default)
+                # 5. Apply the configured date range (preset or Custom)
+                await self._set_date_range(page, self.date_range, self.start_date, self.end_date)
+                result["date_range"] = self.date_range
+                await page.wait_for_timeout(1000)
+
+                # 6. Generate the report (Average format is default)
                 await page.click("text=Generate Report")
                 await page.wait_for_timeout(10000)
                 result["report_generated"] = True
@@ -113,6 +122,70 @@ class AurassureBrowserCollector:
 
         result["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         return result
+
+    async def _set_date_range(self, page, date_range, start_date=None, end_date=None):
+        """Select the report period from the #ddrange preset dropdown.
+
+        Presets seen on the dashboard: 'Last 7 days', 'This Week',
+        'Last week', 'Last 30 days', 'Last Month', 'This month',
+        'This Quarter (Jul - Sep)', 'Last Quarter (Apr - Jun)',
+        'this_year', 'Custom'.
+
+        When 'Custom' is chosen, ``start_date`` / ``end_date`` are required
+        in the format the picker accepts, e.g. '01 Jun 2026, 00:00'.
+        """
+        if not date_range:
+            return
+
+        # Only change it when the currently selected preset differs.
+        selected = page.locator(
+            ".ant-select:has(#ddrange) .ant-select-selection-item"
+        )
+        current = ""
+        try:
+            current = (await selected.inner_text()).strip()
+        except Exception:
+            pass
+
+        if current == date_range and date_range.lower() != "custom":
+            return
+
+        await page.click(".ant-select:has(#ddrange)")
+        await page.wait_for_timeout(800)
+
+        options = page.locator(
+            ".ant-select-dropdown:visible .ant-select-item-option"
+        )
+        matched = False
+        for i in range(await options.count()):
+            text = (await options.nth(i).inner_text()).strip()
+            if text == date_range:
+                await options.nth(i).click()
+                matched = True
+                break
+
+        if not matched:
+            raise RuntimeError(
+                f"Date range '{date_range}' not found in the Custom Reports options"
+            )
+
+        if date_range.lower() == "custom":
+            if not start_date or not end_date:
+                raise RuntimeError(
+                    "Custom date range requires 'start_date' and 'end_date' "
+                    "in settings.yaml (format 'DD Mon YYYY, HH:mm')."
+                )
+            await page.wait_for_timeout(800)
+            start_input = page.locator("input#custom_range")
+            end_input = page.locator('.ant-picker-range input').nth(1)
+            await start_input.click()
+            await start_input.fill(start_date)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(300)
+            await end_input.click()
+            await end_input.fill(end_date)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(300)
 
     def _infer_online_status(self, csv_path: Path) -> bool:
         try:

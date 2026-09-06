@@ -6,12 +6,16 @@ from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 class AQIInBrowserCollector:
-    def __init__(self, store, base_url=None, station_name=None):
+    def __init__(self, store, base_url=None, station_name=None, timeline=None, slot=None):
         self.store = store
         self.base_url = base_url or os.getenv("AQIIN_BASE_URL", "https://dash.aqi.in/")
         self.station_name = station_name or os.getenv("AQIIN_STATION_NAME", "Prana_dixon")
+        self.timeline = timeline or "7 days"
+        self.slot = slot or "15 min"
 
-    async def collect(self, timeline="7 days", slot="15 min"):
+    async def collect(self, timeline=None, slot=None):
+        timeline = timeline or self.timeline
+        slot = slot or self.slot
         email = os.getenv("AQIIN_EMAIL")
         password = os.getenv("AQIIN_PASSWORD")
 

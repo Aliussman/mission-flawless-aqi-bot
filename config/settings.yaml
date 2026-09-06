@@ -7,10 +7,22 @@ collection:
 aqi_in:
   station_name: Prana_dixon
   base_url: https://dash.aqi.in/
+  # Export range offered by the dashboard export wizard (e.g. 7 days)
+  timeline: 7 days
+  # Data resolution offered by the dashboard (e.g. 15 min)
+  slot: 15 min
 
 aurassure:
   asset_name: Plaksha University_0223CVY3
   base_url: https://app.aurassure.com/
+  # Preset offered by the Custom Reports dashboard. Options seen:
+  #   Last 7 days | This Week | Last week | Last 30 days | Last Month
+  #   This month | This Quarter (Jul - Sep) | Last Quarter (Apr - Jun)
+  #   this_year | Custom
+  date_range: Last 7 days
+  # Required only when date_range: Custom (format 'DD Mon YYYY, HH:mm')
+  start_date:
+  end_date:
 
 parameters:
   - aqi

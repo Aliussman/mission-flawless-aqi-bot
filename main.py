@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from aqi.comparison import build_comparison_frame
 from collectors.aqi_in_browser import AQIInBrowserCollector
 from collectors.aurassure_browser import AurassureBrowserCollector
+from config.loader import load_settings
 from processing.aqi_in_parser import parse_aqi_in_csv
 from processing.aurassure_parser import parse_aurassure_csv
 from processing.hourly import aggregate_hourly
@@ -20,20 +21,37 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 
-async def collect_source(collector_cls, store, name):
-    collector = collector_cls(store=store)
+async def collect_source(collector_cls, store, name, init_kwargs=None, collect_kwargs=None):
+    collector = collector_cls(store=store, **(init_kwargs or {}))
     try:
-        return await collector.collect()
+        return await collector.collect(**(collect_kwargs or {}))
     except Exception as e:
         logging.error(f"{name} collector failed: {e}")
         return {"collector": name, "status": "error", "error": str(e)}
 
 async def main():
     store = RawStore()
+    settings = load_settings()
 
     results = {}
-    results["aqi_in"] = await collect_source(AQIInBrowserCollector, store, "aqi_in")
-    results["aurassure"] = await collect_source(AurassureBrowserCollector, store, "aurassure")
+    aqi_settings = settings["aqi_in"]
+    aur_settings = settings["aurassure"]
+
+    results["aqi_in"] = await collect_source(
+        AQIInBrowserCollector, store, "aqi_in",
+        init_kwargs={"base_url": aqi_settings["base_url"], "station_name": aqi_settings["station_name"]},
+        collect_kwargs={"timeline": aqi_settings["timeline"], "slot": aqi_settings["slot"]},
+    )
+    results["aurassure"] = await collect_source(
+        AurassureBrowserCollector, store, "aurassure",
+        init_kwargs={
+            "base_url": aur_settings["base_url"],
+            "asset_name": aur_settings["asset_name"],
+            "date_range": aur_settings["date_range"],
+            "start_date": aur_settings["start_date"],
+            "end_date": aur_settings["end_date"],
+        },
+    )
 
     for key, result in results.items():
         print(f"\n=== {key} ===")
