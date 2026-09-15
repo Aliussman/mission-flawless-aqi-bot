@@ -52,10 +52,15 @@ def _deep_merge(base, override):
     return merged
 
 
-def load_settings(path=None):
+def load_settings(path=None, overrides=None):
+    """Load default settings, overlay config/settings.yaml, then apply
+    ``overrides`` (a dict of the same shape). Explicit runtime values win."""
     path = Path(path or os.getenv("SETTINGS_PATH", "config/settings.yaml"))
     data = {}
     if path.exists():
         with path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-    return _deep_merge(DEFAULT_SETTINGS, data)
+    merged = _deep_merge(DEFAULT_SETTINGS, data)
+    if overrides:
+        merged = _deep_merge(merged, overrides)
+    return merged

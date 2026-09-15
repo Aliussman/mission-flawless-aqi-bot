@@ -32,7 +32,9 @@ async def collect_source(collector_cls, store, name, init_kwargs=None, collect_k
 async def main():
     store = RawStore()
     settings = load_settings()
+    return await run_pipeline(store, settings)
 
+async def run_pipeline(store, settings):
     results = {}
     aqi_settings = settings["aqi_in"]
     aur_settings = settings["aurassure"]
@@ -59,6 +61,7 @@ async def main():
         print(json.dumps(result, indent=2, default=str))
 
     await process_sources(store, results)
+    return results
 
 async def process_sources(store, results):
     hourly_frames = {}
