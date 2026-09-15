@@ -144,6 +144,38 @@ Outputs:
 - `data/processed/combined/comparison.csv` — AQI comparison table
 - `data/reports/` — `comparison_summary.csv` (bias / RMSE / correlation) and PNG charts
 
+## Dashboard (`app.py`)
+
+A Streamlit web UI wrapping the pipeline:
+
+```bash
+streamlit run app.py     # http://localhost:8501
+```
+
+- **Date range** — pick a preset (`Last 24 hours`, `Last 7 days`, `Last 30 days`)
+  or a custom `DD Mon YYYY, HH:mm` range. The values override
+  `config/settings.yaml` in-memory (nothing is written back to the file).
+  Aurassure receives the range as `date_range: Custom`; AQI.in only offers
+  presets, so the closest timeline (`12 hours` / `1 day` / `7 days` /
+  `30 days`) is used.
+- **Fetch & Process Data** — runs the full scrape + AQI pipeline inside a
+  spinner. Results are cached (`@st.cache_data`, 30 min), so widget
+  interactions never re-trigger the headless browsers; use **Force re-scrape**
+  to bypass the cache.
+- **Node status** — 🟢 Online / 🔴 Offline badges for `Prana_dixon` (AQI.in)
+  and `Plaksha University_0223CVY3` (Aurassure), based on the recency
+  (≤ 72 h) and coverage (≥ 20%) of the device-reported AQI series.
+- **Charts** — Plotly time-series of the three AQI methodologies and toggleable
+  pollutant trends (canonical units), plus expandable previews of the raw and
+  processed CSVs.
+- **Errors** — per-source collection failures are surfaced as
+  `st.error`; missing `.env` credentials are flagged in the sidebar.
+
+Notes for sharing: `data/raw`, `data/processed`, `data/reports` are
+git-ignored, so a fresh checkout starts with an empty dashboard until the
+first fetch runs. Every user needs working AQI.in / Aurassure credentials and
+a Playwright Chromium install.
+
 ## Security
 
 - Secrets live only in local `.env` (git-ignored); never hard-code passwords,
