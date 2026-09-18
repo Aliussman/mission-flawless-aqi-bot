@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 
 from config.loader import load_settings
+from aqi.raqi import compute_raqi, daily_from_hourly
 from main import run_pipeline
 from processing.aqi_in_parser import parse_aqi_in_csv
 from processing.aurassure_parser import parse_aurassure_csv
@@ -112,6 +114,22 @@ def read_raw(source, path):
     if not path.exists():
         return None
     return parse_raw_cached(source, str(path), os.path.getmtime(path))
+
+
+@st.cache_data(show_spinner=False)
+def load_raqi_cached(path, mtime):
+    df = pd.read_csv(path)
+    if df is None or df.empty:
+        return None
+    daily = daily_from_hourly(df)
+    return compute_raqi(daily)
+
+
+def load_raqi():
+    path = DATA_DIR / "processed" / "combined" / "hourly_devices.csv"
+    if not path.exists():
+        return None
+    return load_raqi_cached(str(path), os.path.getmtime(path))
 
 
 _SAFE_BUILTINS = (
@@ -450,6 +468,62 @@ if cmp is not None and not cmp.empty:
     )
     fig1.update_layout(legend_title_text="Series", hovermode="x unified", height=430)
     st.plotly_chart(fig1, width="stretch")
+
+# ---------------------------------------------------------------------------
+# RAQI (Revised Air Quality Index)
+# ---------------------------------------------------------------------------
+
+raqi_df = load_raqi()
+if raqi_df is not None and not raqi_df.empty:
+    st.subheader("RAQI (Revised Air Quality Index)")
+    st.caption(
+        "Cheng et al. (2004) entropy-based index. "
+        "RAQI = Max[I\u2081..I\u2085] \u00d7 (\u03a3I / annual-mean \u03a3I) \u00d7 "
+        "(annual-mean Entropy / Entropy), computed on daily means. The available "
+        "data window acts as the \u2018annual\u2019 reference. Taiwan-EPA PSI breakpoints "
+        "(PM10, SO2, CO, NO2, O3)."
+    )
+    cartesian = raqi_df["raqi"].notna() & raqi_df["max_psi"].notna()
+    last = raqi_df[cartesian].iloc[-1]
+    cols = st.columns(3)
+    cols[0].metric("Latest RAQI", f"{last['raqi']:.0f}", delta=f"+{(last['raqi'] - last['max_psi']):.0f} vs PSI")
+    cols[1].metric("PSI (max sub-index)", f"{last['max_psi']:.0f}", delta=f"\u03a3I {last['sum_idx']:.0f}")
+    cols[2].metric("Daily entropy", f"{last['entropy']:.2f}", delta=f"annual mean {last['entropy_annual']:.2f}")
+
+    raqi_plot = raqi_df.copy()
+    raqi_plot["date"] = pd.to_datetime(raqi_plot["date"], errors="coerce")
+    raqi_plot = raqi_plot.dropna(subset=["date"]).sort_values("date")
+
+    figr = px.line(
+        raqi_plot, x="date", y="raqi",
+        labels={"date": "Date", "value": "Index", "variable": "Series"},
+        title=None,
+    )
+    figr.update_traces(name="RAQI", line=dict(color="#7c3aed", width=2.2))
+    figr.add_trace(go.Scatter(x=raqi_plot["date"], y=raqi_plot["max_psi"],
+                              name="PSI (max sub-index)", mode="lines",
+                              line=dict(color="#64748b", width=1.4, dash="dash")))
+    figr.add_trace(go.Scatter(x=raqi_plot["date"], y=raqi_plot["entropy"],
+                              name="Entropy (daily)", mode="lines+markers",
+                              yaxis="y2", marker=dict(size=5),
+                              line=dict(color="#f59e0b", width=1.2)))
+    figr.update_layout(
+        legend_title_text="Series", hovermode="x unified", height=430,
+        yaxis=dict(title="Index"),
+        yaxis2=dict(title="Entropy", overlaying="y", side="right",
+                    showgrid=False, range=[0, 1.2]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(figr, width="stretch")
+
+    with st.expander("RAQI daily table & factor breakdown"):
+        cols_out = ["date", "pm10", "so2", "co", "no2", "o3", "max_psi", "sum_idx",
+                    "entropy", "factor2", "factor3", "raqi"]
+        cols_out = [c for c in cols_out if c in raqi_df.columns]
+        disp = raqi_df[cols_out].sort_values("date").copy()
+        num_cols = disp.select_dtypes(include="number").columns
+        disp[num_cols] = disp[num_cols].round(2)
+        st.dataframe(disp, width="stretch")
 
 if dev is not None and not dev.empty:
     st.subheader("Raw pollutant trends")
