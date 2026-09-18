@@ -1,7 +1,7 @@
 import pandas as pd
 
 from aqi.india import calculate_india_aqi
-from aqi.paper_aqi_rho import calculate_aqi_rho
+from aqi.paper_aqi_rho import calculate_aqi_rho, subindices_from_row
 from aqi.us import calculate_us_aqi
 
 
@@ -25,9 +25,9 @@ def build_comparison_frame(combined, device_aqi_columns):
         row = rec.to_dict()
         us = calculate_us_aqi(row)["aqi"]
         india = calculate_india_aqi(row)["aqi"]
-        rho_res = calculate_aqi_rho(row)
-        rho = rho_res["aqi"]
-        rho_param = rho_res["rho"]
+        rho_res = calculate_aqi_rho(subindices_from_row(row))
+        rho = rho_res["aqi_rho"]
+        rho_param = rho_res["rho_optimal"]
 
         entry = {
             "timestamp": row["timestamp"],
