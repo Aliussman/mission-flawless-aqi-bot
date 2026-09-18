@@ -33,6 +33,29 @@ METHOD_LABELS = {
     "aqi_rho": "AQI \u03c1 (paper)",
 }
 
+TRACE_LABELS = {
+    **METHOD_LABELS,
+    "device_aqi_aurassure": "device: Plaksha University",
+    "device_aqi_aqi_in": "device: Prana_dixon",
+    "custom_aqi": "custom AQI",
+}
+
+NODE_SOURCES = {
+    "Combined (all nodes)": ["device_aqi_aurassure", "device_aqi_aqi_in"],
+    "Prana_dixon (AQI.in) only": ["device_aqi_aqi_in"],
+    "Plaksha University (Aurassure) only": ["device_aqi_aurassure"],
+}
+
+_DEFAULT_CUSTOM_SCRIPT = (
+    "def custom_aqi(row):\n"
+    "    # row is a dict with pollutant concentrations (canonical units), the\n"
+    "    # computed method AQIs and the device AQIs for one timestamp.\n"
+    "    # Return a numeric AQI (or None to skip the row).\n"
+    '    vals = [row[k] for k in ("us_aqi", "india_aqi", "aqi_rho")\n'
+    "            if row.get(k) is not None]\n"
+    "    return sum(vals) / len(vals) if vals else None\n"
+)
+
 POLLUTANTS = ["pm2_5", "pm10", "no2", "so2", "o3", "co", "co2", "temperature", "humidity"]
 
 UNIT_LABELS = {
@@ -89,6 +112,77 @@ def read_raw(source, path):
     if not path.exists():
         return None
     return parse_raw_cached(source, str(path), os.path.getmtime(path))
+
+
+_SAFE_BUILTINS = (
+    "abs", "all", "any", "bool", "dict", "divmod", "enumerate", "filter",
+    "float", "frozenset", "int", "len", "list", "map", "max", "min", "pow",
+    "range", "reversed", "round", "set", "sorted", "str", "sum", "tuple", "zip",
+)
+
+
+def _run_custom_script(script, frame):
+    """Execute a user script defining ``custom_aqi(row)`` over each row.
+
+    ``frame`` holds timestamp + polluttant/method/device columns. The function
+    is called with each row as a dict and must return a numeric AQI or None.
+    Returns a pd.Series of custom AQI indexed by timestamp.
+    """
+    import builtins
+    import math as _math
+    import numpy as _np
+
+    ns = {
+        "math": _math,
+        "np": _np,
+        "pd": pd,
+        "__builtins__": {name: getattr(builtins, name) for name in _SAFE_BUILTINS},
+    }
+    try:
+        exec(compile(script, "<custom-aqi>", "exec"), ns)
+    except Exception as exc:
+        raise RuntimeError(f"Could not execute script: {exc}")
+
+    fn = ns.get("custom_aqi")
+    if not callable(fn):
+        raise RuntimeError("Script must define a callable named 'custom_aqi'.")
+
+    out = {}
+    first_error = None
+    for ts, row in pd.DataFrame(frame).set_index("timestamp").iterrows():
+        try:
+            value = fn(row.to_dict())
+        except Exception as exc:  # noqa: BLE001 - run the script the user wrote
+            if first_error is None:
+                first_error = f"row {ts}: {exc}"
+            value = None
+        if value is not None:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = None
+        out[ts] = value
+    if first_error is not None:
+        raise RuntimeError(f"custom_aqi raised an exception: {first_error}")
+
+    series = pd.Series(out, dtype="float64")
+    series.index.name = "timestamp"
+    return series
+
+
+def _build_calc_frame(cmp, dev):
+    """Merge method AQIs with pollutant + device columns for custom scripts."""
+    if cmp is None or dev is None:
+        return None
+    cmp_f = cmp.copy()
+    cmp_f["timestamp"] = pd.to_datetime(cmp_f["timestamp"], errors="coerce")
+    dev_f = dev.copy()
+    dev_f["timestamp"] = pd.to_datetime(dev_f["timestamp"], errors="coerce")
+    dev_cols = ["timestamp"]
+    dev_cols += [c for c in POLLUTANTS if c in dev_f.columns]
+    dev_cols += [c for c in ("device_aqi_aurassure", "device_aqi_aqi_in") if c in dev_f.columns]
+    merged = pd.merge(cmp_f, dev_f[dev_cols], on="timestamp", how="left")
+    return merged.dropna(subset=["timestamp"])
 
 
 @st.cache_data(show_spinner=False, ttl=30 * 60)
@@ -292,16 +386,69 @@ if cmp is not None and not cmp.empty:
 # ---------------------------------------------------------------------------
 
 if cmp is not None and not cmp.empty:
-    st.subheader("AQI methodology comparison over time")
+    st.subheader("AQI methodology comparison")
+
     cmp_plot = cmp.copy()
     cmp_plot["timestamp"] = pd.to_datetime(cmp_plot["timestamp"], errors="coerce")
     cmp_plot = cmp_plot.dropna(subset=["timestamp"]).sort_values("timestamp")
-    renamed = cmp_plot.rename(columns=METHOD_LABELS)
-    fig1 = px.line(
-        renamed, x="timestamp", y=list(METHOD_LABELS.values()),
-        labels={"timestamp": "Time", "value": "AQI", "variable": "Method"},
+
+    # Attach device-reported AQI series (they live in hourly_devices.csv)
+    if dev is not None:
+        dev_meta = dev.copy()
+        dev_meta["timestamp"] = pd.to_datetime(dev_meta["timestamp"], errors="coerce")
+        dev_meta = dev_meta[["timestamp"] + [c for c in ("device_aqi_aurassure", "device_aqi_aqi_in") if c in dev_meta.columns]]
+        cmp_plot = pd.merge(cmp_plot, dev_meta, on="timestamp", how="left")
+
+    source_sel = st.selectbox(
+        "AQI view",
+        list(NODE_SOURCES.keys()),
+        help="Show the computed methods (US EPA / India CPCB / AQI \u03c1) plus one or both device-reported AQI series.",
     )
-    fig1.update_layout(legend_title_text="Method", hovermode="x unified", height=430)
+    base_traces = NODE_SOURCES[source_sel]
+
+    with st.expander("Custom AQI calculation (Python script)"):
+        script = st.text_area(
+            "Define a \u2018custom_aqi(row)\u2019 function that returns a numeric AQI. "
+            "Each row is a dict of pollutant concentrations (canonical units), the "
+            "computed method AQIs and the device AQIs.",
+            value=st.session_state.get("_custom_script", _DEFAULT_CUSTOM_SCRIPT),
+            height=180,
+        )
+        col_a, col_b = st.columns(2)
+        if col_a.button("Compute custom AQI", type="secondary", width="stretch"):
+            calc_frame = _build_calc_frame(cmp, dev)
+            if calc_frame is None:
+                st.error("No pollutant data available to run the custom script.")
+            else:
+                with st.spinner("Evaluating custom script..."):
+                    try:
+                        custom = _run_custom_script(script, calc_frame)
+                    except Exception as exc:
+                        st.session_state.pop("_custom_col", None)
+                        st.error(f"Custom script failed: {exc}")
+                    else:
+                        st.session_state["_custom_script"] = script
+                        st.session_state["_custom_col"] = custom
+                        st.success(f"Custom AQI computed for {int(custom.notna().sum())} timestamps.")
+        if col_b.button("Clear custom AQI", width="stretch"):
+            st.session_state.pop("_custom_col", None)
+
+    y_cols = METHODS + base_traces
+    trace_labels = {c: TRACE_LABELS[c] for c in y_cols}
+    custom = st.session_state.get("_custom_col")
+    if custom is not None:
+        cmp_plot = cmp_plot.merge(
+            custom.rename("custom_aqi"), left_on="timestamp", right_index=True, how="left"
+        )
+        y_cols = y_cols + ["custom_aqi"]
+        trace_labels["custom_aqi"] = TRACE_LABELS["custom_aqi"]
+
+    renamed = cmp_plot.rename(columns=trace_labels)
+    fig1 = px.line(
+        renamed, x="timestamp", y=list(trace_labels.values()),
+        labels={"timestamp": "Time", "value": "AQI", "variable": "Series"},
+    )
+    fig1.update_layout(legend_title_text="Series", hovermode="x unified", height=430)
     st.plotly_chart(fig1, width="stretch")
 
 if dev is not None and not dev.empty:
